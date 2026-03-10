@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rạp Phim Của Tụi Mình</title>
+    <script src="/socket.io/socket.io.js"></script>
+    <style>
+        body { background: #111; color: white; font-family: sans-serif; text-align: center; margin: 0; padding: 15px; }
+        #player { width: 100%; max-width: 600px; height: 300px; background: #000; margin: 10px auto; border-radius: 8px;}
+        input, button { padding: 12px; margin: 5px; border-radius: 5px; border: none; font-size: 16px;}
+        button { background: #e50914; color: white; font-weight: bold; cursor: pointer; }
+        #chat-box { width: 100%; max-width: 600px; height: 150px; background: #222; margin: 10px auto; overflow-y: scroll; text-align: left; padding: 10px; box-sizing: border-box; border-radius: 8px;}
+        #status-bar { color: #aaa; font-size: 14px; margin-bottom: 10px;}
+        .msg { margin: 5px 0; border-bottom: 1px solid #333; padding-bottom: 5px;}
+    </style>
+</head>
+<body>
+    <h2>🍿 Rạp Phim Mini</h2>
+    <div id="status-bar">Phòng đang mở: <span id="room-count">0</span>/10</div>
+    
+    <div id="setup">
+        <input type="text" id="room-name" placeholder="Tạo tên phòng (VD: PhongCuaT)">
+        <button onclick="joinRoom()">Vào Phòng</button>
+    </div>
+
+    <div id="cinema" style="display:none;">
+        <div id="status-bar">Khách trong phòng: <span id="user-count">1</span>/5</div>
+        <input type="text" id="yt-link" placeholder="Dán link Youtube vô đây...">
+        <button onclick="changeVideo()">Chiếu Phim</button>
+        
+        <div id="player"></div>
+        
+        <div id="chat-box"></div>
+        <div style="display: flex; justify-content: center; gap: 5px; max-width: 600px; margin: auto;">
+            <input type="text" id="chat-msg" placeholder="Chửi thề ở đây..." style="flex: 1;">
+            <button onclick="sendMsg()">Gửi</button>
+        </div>
+    </div>
+
+    <script>
+        const socket = io();
+        let player;
+        let isSyncing = false;
+
+        // Gọi Youtube ra
+        const tag = document.createElement('script');
+        tag.src = "https://www.youtube.com/iframe_api";
+        const firstScriptTag = document.getElementsByTagName('script')[0];
+        firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
+
+        function onYouTubeIframeAPIReady() {
+            player = new YT.Player('player', {
+                height: '300', width: '100%', videoId: '',
+                events: { 'onStateChange': onPlayerStateChange }
+            });
+        }
+
+        function joinRoom() {
+            const room = document.getElementById('room-name').value;
+            if(room) {
+                socket.emit('join_room', room);
+                document.getElementById('setup').style.display = 'none';
+                document.getElementById('cinema').style.display = 'block';
+            }
+        }
+
+        function changeVideo() {
+            const link = document.getElementById('yt-link').value;
+            const videoId = link.split('v=')[1]?.substring(0, 11) || link.split('/')[3]?.substring(0, 11); 
+            if(videoId) socket.emit('change_video', videoId);
+        }
+
+        // Bắt sự kiện Play/Pause để đồng bộ
+        function onPlayerStateChange(event) {
+            if (isSyncing) return; 
+            if (event.data == YT.PlayerState.PLAYING) {
+                socket.emit('sync_video', { state: 'play', time: player.getCurrentTime() });
+            } else if (event.data == YT.PlayerState.PAUSED) {
+                socket.emit('sync_video', { state: 'pause', time: player.getCurrentTime() });
+            }
+        }
+
+        // Nhận lệnh đồng bộ từ máy bên kia
+        socket.on('change_video', (videoId) => { player.loadVideoById(videoId); });
+        socket.on('sync_video', (data) => {
+            isSyncing = true;
+            if (Math.abs(player.getCurrentTime() - data.time) > 2) {
+                player.seekTo(data.time);
+            }
+            if (data.state === 'play') player.playVideo();
+            if (data.state === 'pause') player.pauseVideo();
+            setTimeout(() => isSyncing = false, 1000);
+        });
+
+        // Chat chit
+        socket.on('update_room_count', (count, max) => { document.getElementById('room-count').innerText = count; });
+        socket.on('update_user_count', (count, max) => { document.getElementById('user-count').innerText = count; });
+        socket.on('error_msg', (msg) => { alert(msg); location.reload(); });
+
+        function sendMsg() {
+            const msg = document.getElementById('chat-msg').value;
+            if(msg) { socket.emit('send_msg', msg); document.getElementById('chat-msg').value = ''; }
+        }
+        socket.on('receive_msg', (msg) => {
+            const box = document.getElementById('chat-box');
+            box.innerHTML += `<div class="msg">💬 ${msg}</div>`;
+            box.scrollTop = box.scrollHeight;
+        });
+    </script>
+</body>
+</html>
